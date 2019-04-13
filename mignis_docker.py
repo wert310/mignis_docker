@@ -72,7 +72,7 @@ def mk_rules(rules_list, aliases, drop_first=False):
             else:
                 accepts.append(rule)
         rules_list = drops + accepts
-    return [ render_rule(rule, aliases) for rule in rules_list ]
+    return [ out for rule in rules_list for out in render_rule(rule, aliases) ]
 
 def render_rule(rule, aliases):
     actions = {
@@ -82,53 +82,81 @@ def render_rule(rule, aliases):
     }
     if rule.rule_type not in actions:
         raise RuntimeError("Unsupported rule: {}".format(rule))
-    
+
     prefix = 'iptables -t filter -A MIGNIS-DOCKER'
     src, srcport = rule.src
     dst, dstport = rule.dst
 
-    src = aliases.get(src, src)
-    dst = aliases.get(dst, dst)
+    if not isinstance(src, list): src = [src]
+    if not isinstance(dst, list): dst = [dst]
+    if not isinstance(srcport, list): srcport = [srcport]
+    if not isinstance(dstport, list): dstport = [dstport]
 
-    proto = ''
-    if rule.proto:
-        proto = ' -p {}'.format(rule.proto)
-    else:
-        if (srcport and srcport != '*') or (dstport and dstport != '*'):
-            raise RuntimeError("No protocol specified! (rule {})".format(rule))
-    
-    srcfilter = ''
-    if (isinstance(src, str) or isinstance(src, unicode)) and src != '*':
-        srcfilter = ' -i {}'.format(src)
-    elif isinstance(src, IPv4Address) or isinstance(src, IPv4Network):
-        srcfilter = ' -s {}'.format(src)
-    elif isinstance(src, IPv4Range):
-        srcfilter = ' -m iprange --src-range {}'.format(src)
+    rules = []
 
-    if isinstance(srcport, Port):
-        srcfilter += ' --sport {}'.format(srcport.port)
-    elif isinstance(srcport, PortRange):
-        srcfilter += ' -m multiport --sports {}:{}'.format(srcport.from_, srcport.to)
+    for src, dst, srcport, dstport in [
+            (s, d, sp, dp)
+            for s in src for sp in srcport
+            for d in dst for dp in dstport ]:
+        # TODO for each conbination fo src, srcport, dst, dstport
+        # if one of them is a list
 
-    dstfilter = ''
-    if (isinstance(src, str) or isinstance(src, unicode)) and dst != '*':
-        dstfilter = ' -o {}'.format(dst)
-    elif isinstance(dst, IPv4Address) or isinstance(dst, IPv4Network):
-        dstfilter = ' -d {}'.format(dst)
-    elif isinstance(dst, IPv4Range):
-        dstfilter = ' -m iprange --dst-range {}'.format(dst)
+        src = aliases.get(src, src)
+        dst = aliases.get(dst, dst)
 
-    if isinstance(dstport, Port):
-        dstfilter += ' --dport {}'.format(dstport.port)
-    elif isinstance(dstport, PortRange):
-        dstfilter += ' -m multiport --dports {}:{}'.format(dstport.from_, dstport.to)
+        if not isinstance(src, list): src = [src]
+        if not isinstance(dst, list): dst = [dst]
 
-    extrafilters = ' ' + rule.pred if rule.pred else ''
-    action = ' -j ' + actions.get(rule.rule_type, '')
-    
-    return prefix + proto + srcfilter + dstfilter + extrafilters + action
-    
-    
+        for src, dst in [ (s, d) for s in src for d in dst ]:
+            # TODO for each combination of src, dst if one of them is a list
+
+            proto = ''
+            if rule.proto:
+                proto = ' -p {}'.format(rule.proto)
+            else:
+                if (srcport and srcport != '*') or (dstport and dstport != '*'):
+                    raise RuntimeError("No protocol specified! (rule {})".format(rule))
+
+            if src == 'local' and dst == 'local':
+                raise RuntimeError("Loopback local > local rules are not supported!")
+
+            srcfilter = ''
+            if src == 'local':
+                prefix = prefix.replace("MIGNIS-DOCKER", "OUTPUT")
+            elif (isinstance(src, str) or isinstance(src, unicode)) and src != '*':
+                srcfilter = ' -i {}'.format(src)
+            elif isinstance(src, IPv4Address) or isinstance(src, IPv4Network):
+                srcfilter = ' -s {}'.format(src)
+            elif isinstance(src, IPv4Range):
+                srcfilter = ' -m iprange --src-range {}'.format(src)
+
+            if isinstance(srcport, Port):
+                srcfilter += ' --sport {}'.format(srcport.port)
+            elif isinstance(srcport, PortRange):
+                srcfilter += ' -m multiport --sports {}:{}'.format(srcport.from_, srcport.to)
+
+            dstfilter = ''
+            if dst == 'local':
+                prefix = prefix.replace("MIGNIS-DOCKER", "INPUT")
+            elif (isinstance(dst, str) or isinstance(dst, unicode)) and dst != '*':
+                dstfilter = ' -o {}'.format(dst)
+            elif isinstance(dst, IPv4Address) or isinstance(dst, IPv4Network):
+                dstfilter = ' -d {}'.format(dst)
+            elif isinstance(dst, IPv4Range):
+                dstfilter = ' -m iprange --dst-range {}'.format(dst)
+
+            if isinstance(dstport, Port):
+                dstfilter += ' --dport {}'.format(dstport.port)
+            elif isinstance(dstport, PortRange):
+                dstfilter += ' -m multiport --dports {}:{}'.format(dstport.from_, dstport.to)
+
+            extrafilters = ' ' + rule.pred if rule.pred else ''
+            action = ' -j ' + actions.get(rule.rule_type, '')
+
+            rules.append(prefix + proto + srcfilter + dstfilter + extrafilters + action)
+
+    return rules
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser("docker_mignis - mignis for DOCKER-USER")
@@ -142,6 +170,7 @@ if __name__ == '__main__':
     parsed = mignis_parser.mignis_conf().parse_strict(content)
     aliases = mk_aliases(parsed['ALIASES'])
     options = parsed['OPTIONS'] if 'OPTIONS' in parsed else []
+    custom = parsed['CUSTOM'] if 'CUSTOM' in parsed else []
 
     default_drop = False
     for opt in options:
@@ -151,7 +180,7 @@ if __name__ == '__main__':
             print "<!> warning: option not supported '{}'".format(opt.name)
 
     rules = mk_rules(parsed['FIREWALL'], aliases, drop_first=default_drop)
-    
+
     rules = [
         'iptables -t filter -N MIGNIS-DOCKER',
         'iptables -t filter -F MIGNIS-DOCKER',
@@ -174,4 +203,3 @@ if __name__ == '__main__':
         for rule in rules:
             subprocess.call(shlex.split(rule))
         print "Done."
-
