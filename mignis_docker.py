@@ -98,8 +98,6 @@ def render_rule(rule, aliases):
             (s, d, sp, dp)
             for s in src for sp in srcport
             for d in dst for dp in dstport ]:
-        # TODO for each conbination fo src, srcport, dst, dstport
-        # if one of them is a list
 
         src = aliases.get(src, src)
         dst = aliases.get(dst, dst)
@@ -108,7 +106,6 @@ def render_rule(rule, aliases):
         if not isinstance(dst, list): dst = [dst]
 
         for src, dst in [ (s, d) for s in src for d in dst ]:
-            # TODO for each combination of src, dst if one of them is a list
 
             proto = ''
             if rule.proto:
