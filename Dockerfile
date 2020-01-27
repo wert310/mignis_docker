@@ -1,4 +1,5 @@
 FROM alpine:3.9 as builder
+RUN sed -i 's/v3.9/edge/g' /etc/apk/repositories
 RUN apk update && apk add build-base go curl git \
         && git clone https://github.com/jpillora/webproc.git \
         && cd webproc \
@@ -14,4 +15,4 @@ RUN pip install -r requirements.txt
 ENV HTTP_USER user
 ENV HTTP_PASS pass
 EXPOSE 9090
-ENTRYPOINT ["webproc", "-p", "9090", "--config","/mignis.conf", "--","./mignis_docker.py","-c", "/mignis.conf", "-p", "-x"]
+ENTRYPOINT ["webproc", "-p", "9090", "-c","/mignis.conf", "--","./mignis_docker.py","-c", "/mignis.conf", "-p", "-x"]
